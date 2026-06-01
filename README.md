@@ -19,66 +19,16 @@ I am a CompTIA Security+ certified cybersecurity graduate with a strong interest
 
 Through this repository, I am documenting my hands-on labs and translating them into real-world security scenarios.
 
----
-
+ 
 ## 📂 Projects
-
-### 🔹 01 - SOC Fundamentals
-📁 [`01-soc-fundamentals`](./01-soc-fundamentals)
-
-- Understanding SOC roles and responsibilities  
-- Alert severity analysis (medium vs critical)  
-- Basic incident escalation workflow  
-- Initial response actions (IP blocking, alert triage)
-
-📚 **Blog:**  
-👉 [Read full write-up on Medium](https://medium.com/p/fffc7bda12b8?postPublishedType=initial)
-
+ 
+| # | Project | Status |
+|---|---|---|
+| 01 | [SOC Fundamentals](./01-soc-fundamentals/README.md) | ✅ Complete |
+ 
 ---
-
-## 🧠 Skills Demonstrated
-
-- Security alert monitoring  
-- Threat prioritization and triage  
-- Basic incident response workflow  
-- Use of threat intelligence tools (e.g., AbuseIPDB)  
-- Understanding of authentication-based threats (SSH, unauthorized access)
-
----
-
-## 🛠️ Tools & Technologies
-
-- Windows Security Concepts  
-- TryHackMe Labs  
-- AbuseIPDB  
-- Firewall rules  
-- GitHub for documentation  
-
----
-
-## 📈 Learning Roadmap
-
-This portfolio will continuously expand with more advanced projects:
-
-- 🔄 Log Analysis & Windows Event Investigation  
-- 🔄 SIEM (Splunk / ELK) Labs  
-- 🔄 Incident Response Playbooks  
-- 🔄 Threat Detection & Hunting  
-- 🔄 GRC Framework Mapping (NIST, ISO 27001)
-
----
-
-## 📌 Objective
-
-To build a strong, job-ready cybersecurity portfolio that demonstrates real-world SOC and GRC capabilities to recruiters and hiring managers.
-
----
-
-## 🤝 Let's Connect
-
-- 💼 LinkedIn: (add your link)
-- ✍️ Medium: https://medium.com/p/fffc7bda12b8?postPublishedType=initial
-
----
-
-⭐ If you find this helpful or interesting, feel free to star the repository!
+ 
+## 🤝 Connect
+ 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/joshiyashcyber/)
+[![Medium](https://img.shields.io/badge/Medium-000000?style=flat&logo=medium&logoColor=white)](https://medium.com/p/fffc7bda12b8?postPublishedType=initial)
