@@ -24,7 +24,7 @@ Through this repository, I am documenting my hands-on labs and translating them 
 | # | Project | Status |
 |---|---|---|
 | 01 | [SOC Fundamentals](01-soc-fundamentals) | ✅ Complete |
-| 02 | [Endpoint Security Hardening & Compliance Automation](02-endpoint-hardening) | ✅ Complete |
+| 02 | [Endpoint Security Hardening & Compliance Automation](Endpoint Security Hardening & Compliance Automation) | ✅ Complete |
 
 ---
 
