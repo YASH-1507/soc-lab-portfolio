@@ -54,8 +54,8 @@ Automated CIS Microsoft Windows 11 Enterprise Benchmark v3.0.0 hardening using P
 | Stage | Passed | Failed | Score |
 |---|---|---|---|
 | Baseline | 0 | 348 | 0% |
-| After Round 1 (`cis_remediate_v2.ps1`) | 200 | 273 | 42% |
-| After Round 2 (`cis_remediate_v3.ps1`) | 437 | 36 | **92%** |
+| After Round 1 (`cis_remediate.ps1`) | 200 | 273 | 42% |
+| After Round 2 (`cis_remediate_v2.ps1`) | 437 | 36 | **92%** |
 
 ---
 
