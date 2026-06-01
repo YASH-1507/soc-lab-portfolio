@@ -31,4 +31,4 @@ Through this repository, I am documenting my hands-on labs and translating them 
 ## 🤝 Connect
  
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/joshiyashcyber/)
-[![Medium](https://img.shields.io/badge/Medium-000000?style=flat&logo=medium&logoColor=white)](https://medium.com/p/fffc7bda12b8?postPublishedType=initial)
+[![Medium](https://img.shields.io/badge/Medium-000000?style=flat&logo=medium&logoColor=white)](https://medium.com/@joshiyash1507)
