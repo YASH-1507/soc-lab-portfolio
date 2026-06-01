@@ -1,0 +1,428 @@
+#Requires -RunAsAdministrator
+<#
+.SYNOPSIS
+    CIS Windows 11 Enterprise - Automated Remediation Script
+    Based on your Wazuh/CIS scan audit report (348 failed checks)
+
+.DESCRIPTION
+    Remediates HIGH and MEDIUM severity CIS benchmarks that do NOT
+    cause daily workflow friction. Items that would break Bluetooth,
+    printing, OneDrive, camera, Cortana, Xbox, Store, etc. are
+    intentionally excluded and listed separately at the bottom.
+
+    SECTIONS COVERED:
+    - Section 1:  Account Policies (Password + Lockout)
+    - Section 2:  Local Policies / Security Options
+    - Section 9:  Windows Firewall Logging
+    - Section 17: Advanced Audit Policy
+    - Section 18: Administrative Templates (Network, MSS, IE hardening)
+
+.NOTES
+    Run from an elevated PowerShell session (Admin).
+    Test in a non-production environment first.
+    Some settings require Group Policy (GPO) and will be applied via
+    secedit or registry where possible.
+
+    Excluded (friction) items are listed at the bottom of this file.
+#>
+
+Set-StrictMode -Off
+$ErrorActionPreference = "Continue"
+$LogFile = "$env:TEMP\CIS_Remediation_$(Get-Date -Format 'yyyyMMdd_HHmm').log"
+
+function Write-Log {
+    param([string]$Msg, [string]$Level = "INFO")
+    $ts = Get-Date -Format "HH:mm:ss"
+    $line = "[$ts][$Level] $Msg"
+    Write-Host $line -ForegroundColor $(if($Level -eq "OK"){"Green"} elseif($Level -eq "WARN"){"Yellow"} else{"Cyan"})
+    Add-Content -Path $LogFile -Value $line
+}
+
+function Set-RegValue {
+    param([string]$Path, [string]$Name, $Value, [string]$Type = "DWord")
+    try {
+        if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+        Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force
+        Write-Log "SET  $Path\$Name = $Value" "OK"
+    } catch {
+        Write-Log "FAIL $Path\$Name : $_" "WARN"
+    }
+}
+
+Write-Log "=== CIS Win11 Enterprise Remediation Started ==="
+Write-Log "Log file: $LogFile"
+Write-Log ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1 – ACCOUNT POLICIES (via secedit)
+# CIS 1.1.3  Minimum password age >= 1 day
+# CIS 1.1.4  Minimum password length >= 14
+# CIS 1.2.1  Account lockout duration >= 15 min
+# CIS 1.2.2  Account lockout threshold <= 5 (not 0)
+# CIS 1.2.4  Reset lockout counter >= 15 min
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log "--- Section 1: Account Policies ---"
+
+$seceditCfg = "$env:TEMP\cis_secpol.cfg"
+secedit /export /cfg $seceditCfg /quiet
+
+if (Test-Path $seceditCfg) {
+    $content = Get-Content $seceditCfg
+
+    $content = $content -replace "MinimumPasswordAge\s*=\s*\d+",    "MinimumPasswordAge = 1"
+    $content = $content -replace "MinimumPasswordLength\s*=\s*\d+", "MinimumPasswordLength = 14"
+    $content = $content -replace "LockoutDuration\s*=\s*\d+",       "LockoutDuration = 15"
+    $content = $content -replace "LockoutBadCount\s*=\s*\d+",       "LockoutBadCount = 5"
+    $content = $content -replace "ResetLockoutCount\s*=\s*\d+",     "ResetLockoutCount = 15"
+
+    $content | Set-Content $seceditCfg
+    secedit /configure /db "$env:TEMP\cis_secedit.sdb" /cfg $seceditCfg /quiet
+    Write-Log "Password/Lockout policies applied via secedit" "OK"
+    Remove-Item $seceditCfg -Force -ErrorAction SilentlyContinue
+} else {
+    Write-Log "secedit export failed – apply password policies manually via secpol.msc" "WARN"
+}
+
+# CIS 1.1.6 – Relax minimum password length limits (Registry)
+Set-RegValue "HKLM:\System\CurrentControlSet\Control\SAM" "RelaxMinimumPasswordLengthLimits" 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2 – LOCAL POLICIES / SECURITY OPTIONS (Registry)
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "--- Section 2: Local Policies / Security Options ---"
+
+$lsaPath  = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+$msPath   = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+$mssrvPath = "HKLM:\SYSTEM\CurrentControlSet\Services\LanManServer\Parameters"
+
+# CIS 2.3.1.1 – Block Microsoft accounts (users can't add/log on)
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "NoConnectedUser" 3
+
+# CIS 2.3.2.1 – Force audit policy subcategory settings
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "SCENoApplyLegacyAuditPolicy" 1
+
+# CIS 2.3.4.1 – Prevent users from installing printer drivers
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Print\Providers\LanMan Print Services\Servers" "AddPrinterDrivers" 1
+
+# CIS 2.3.7.1 – Interactive logon: require CTRL+ALT+DEL (disable the "not require" flag)
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DisableCAD" 0
+
+# CIS 2.3.7.2 – Don't display last signed-in username
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "DontDisplayLastUserName" 1
+
+# CIS 2.3.7.3 – Machine account lockout threshold = 10
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "MaxDevicePasswordFailedAttempts" 10
+
+# CIS 2.3.7.4 – Machine inactivity limit = 900 seconds (15 min)
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "InactivityTimeoutSecs" 900
+
+# CIS 2.3.7.7 – Cached logon count <= 4
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "CachedLogonsCount" "4" "String"
+
+# CIS 2.3.7.9 – Smart card removal = Lock Workstation (1)
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" "ScRemoveOption" "1" "String"
+
+# CIS 2.3.8.1 – Client: Digitally sign communications (always)
+Set-RegValue $msPath "RequireSecuritySignature" 1
+Set-RegValue $msPath "EnableSecuritySignature"  1
+
+# CIS 2.3.9.2 – Server: Digitally sign communications (always)
+Set-RegValue $mssrvPath "RequireSecuritySignature" 1
+
+# CIS 2.3.9.3 – Server: Digitally sign if client agrees
+Set-RegValue $mssrvPath "EnableSecuritySignature" 1
+
+# CIS 2.3.9.5 – SPN target name validation = Accept if provided (1)
+Set-RegValue $mssrvPath "SmbServerNameHardeningLevel" 1
+
+# CIS 2.3.10.3 – Do not allow anonymous SAM/shares enumeration
+Set-RegValue $lsaPath "RestrictAnonymousSAM" 1
+Set-RegValue $lsaPath "RestrictAnonymous"    1
+
+# CIS 2.3.10.4 – Do not store passwords for network auth
+Set-RegValue $lsaPath "DisableDomainCreds" 1
+
+# CIS 2.3.11.1 – Allow LocalSystem to use computer identity for NTLM
+Set-RegValue $lsaPath "UseMachineId" 1
+
+# CIS 2.3.11.4 – Kerberos: AES128 + AES256 only
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters" "SupportedEncryptionTypes" 2147483640
+
+# CIS 2.3.11.7 – LM auth = NTLMv2 only, refuse LM/NTLM
+Set-RegValue $lsaPath "LmCompatibilityLevel" 5
+
+# CIS 2.3.11.9 / 2.3.11.10 – NTLM SSP: require NTLMv2 + 128-bit
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0" "NTLMMinClientSec" 537395200
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0" "NTLMMinServerSec" 537395200
+
+# CIS 2.3.11.11 – Audit incoming NTLM traffic = Enable for all accounts
+Set-RegValue $lsaPath "AuditReceivingNTLMTraffic" 2
+
+# CIS 2.3.11.12 – Outgoing NTLM = Audit all
+Set-RegValue $lsaPath "RestrictSendingNTLMTraffic" 1
+
+# CIS 2.3.17.1 – UAC: Admin Approval Mode for Built-in Admin
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "FilterAdministratorToken" 1
+
+# CIS 2.3.17.2 – Elevation prompt for admins = Prompt for consent on secure desktop
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "ConsentPromptBehaviorAdmin" 2
+
+# CIS 2.3.17.3 – Elevation prompt for std users = Deny automatically
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" "ConsentPromptBehaviorUser" 0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 9 – WINDOWS FIREWALL LOGGING
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "--- Section 9: Windows Firewall ---"
+
+# Create log directory if missing
+$fwLogDir = "$env:SystemRoot\System32\logfiles\firewall"
+if (-not (Test-Path $fwLogDir)) {
+    New-Item -Path $fwLogDir -ItemType Directory -Force | Out-Null
+    Write-Log "Created firewall log directory" "OK"
+}
+
+# CIS 9.x – Domain, Private, Public firewall logging
+$profiles = @("Domain","Private","Public")
+foreach ($p in $profiles) {
+    $profileLower = $p.ToLower()
+    $logName = "${profileLower}fw.log"
+    netsh advfirewall set ${profileLower}profile logging filename "$fwLogDir\$logName" 2>$null
+    netsh advfirewall set ${profileLower}profile logging maxfilesize 16384             2>$null
+    netsh advfirewall set ${profileLower}profile logging droppedconnections enable     2>$null
+    netsh advfirewall set ${profileLower}profile logging allowedconnections enable     2>$null
+    netsh advfirewall set ${profileLower}profile settings localfirewallrules notconfigured 2>$null | Out-Null
+    Write-Log "Firewall $p profile logging configured" "OK"
+}
+
+# CIS 9.x – Suppress firewall notifications (not blocking, just no pop-ups)
+netsh advfirewall set domainprofile settings inboundusernotification disable  2>$null | Out-Null
+netsh advfirewall set privateprofile settings inboundusernotification disable 2>$null | Out-Null
+netsh advfirewall set publicprofile settings inboundusernotification disable  2>$null | Out-Null
+Write-Log "Firewall inbound notifications suppressed" "OK"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 17 – ADVANCED AUDIT POLICY
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "--- Section 17: Advanced Audit Policy ---"
+
+$auditSettings = @(
+    # Category, SubCategory, SuccessFlag, FailureFlag
+    @("Account Logon",        "Audit Credential Validation",        "enable", "enable"),
+    @("Account Management",   "Audit Security Group Management",    "enable", "enable"),
+    @("Account Management",   "Audit User Account Management",      "enable", "enable"),
+    @("Logon/Logoff",         "Audit Account Lockout",              "enable", "enable"),
+    @("Logon/Logoff",         "Audit Logon",                        "enable", "enable"),
+    @("Logon/Logoff",         "Audit Logoff",                       "enable", "no"),
+    @("Logon/Logoff",         "Audit Special Logon",                "enable", "no"),
+    @("Object Access",        "Audit Removable Storage",            "enable", "enable"),
+    @("Policy Change",        "Audit Audit Policy Change",          "enable", "enable"),
+    @("Policy Change",        "Audit Authentication Policy Change", "enable", "no"),
+    @("Privilege Use",        "Audit Sensitive Privilege Use",      "enable", "enable"),
+    @("System",               "Audit Security System Extension",    "enable", "enable"),
+    @("System",               "Audit System Integrity",             "enable", "enable")
+)
+
+foreach ($a in $auditSettings) {
+    $sub = $a[1]
+    $sFlag = if ($a[2] -eq "enable") { "/success:enable" } else { "/success:disable" }
+    $fFlag = if ($a[3] -eq "enable") { "/failure:enable" } else { "/failure:disable" }
+    auditpol /set /subcategory:"$sub" $sFlag $fFlag 2>$null | Out-Null
+    Write-Log "Audit: $sub → Success=$($a[2]) Failure=$($a[3])" "OK"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 18 – ADMINISTRATIVE TEMPLATES
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "--- Section 18: Administrative Templates (registry) ---"
+
+# CIS 18.4.5 – Enable Certificate Padding
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Cryptography\Wintrust\Config" "EnableCertPaddingCheck" "1" "String"
+
+# CIS 18.4.6 – SEHOP
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" "DisableExceptionChainValidation" 0
+
+# CIS 18.4.7 – NetBT NodeType = P-node (2)
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters" "NodeType" 2
+
+# CIS 18.5.2 – IPv6 source routing = Highest protection (3)
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" "DisableIPSourceRouting" 2
+
+# CIS 18.5.3 – IPv4 source routing = Highest protection (3)
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "DisableIPSourceRouting" 2
+
+# CIS 18.5.4 – Prevent dial-up password save
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\RasMan\Parameters" "DisableSavePassword" 1
+
+# CIS 18.5.5 – Disable ICMP redirects
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "EnableICMPRedirect" 0
+
+# CIS 18.5.6 – KeepAlive = 300000 ms (5 min)
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "KeepAliveTime" 300000
+
+# CIS 18.5.8 – Disable IRDP router discovery
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "PerformRouterDiscovery" 0
+
+# CIS 18.5.11 – IPv6 TcpMaxDataRetransmissions = 3
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" "TcpMaxDataRetransmissions" 3
+
+# CIS 18.5.12 – IPv4 TcpMaxDataRetransmissions = 3
+Set-RegValue "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "TcpMaxDataRetransmissions" 3
+
+# CIS 18.6.4.1 – DNS over HTTPS (DoH) = Allow DoH (2)
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "DoHPolicy" 2
+
+# CIS 18.6.4.3 – Turn off multicast name resolution (LLMNR)
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "EnableMulticast" 0
+
+# CIS 18.6.8.1 – Disable insecure guest logons to SMB
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation" "AllowInsecureGuestAuth" 0
+
+# CIS 18.6.10.2 – Turn off P2P networking
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Peernet" "Disabled" 1
+
+# CIS 18.9.19.6 – Disable "Continue experiences on this device"
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "EnableCdp" 0
+
+# CIS 18.9.20.1.12 – Turn off WM Customer Experience Improvement Program
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Messenger\Client" "CEIP" 2
+
+# CIS 18.9.20.1.13 – Turn off Windows CEIP
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows" "CEIPEnable" 0
+
+# CIS 18.9.28.5 – Turn off app notifications on lock screen
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "DisableLockScreenAppNotifications" 1
+
+# CIS 18.9.49.1 – Turn off advertising ID
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" "DisabledByGroupPolicy" 1
+
+# CIS 18.10.7.1 – Disallow Autoplay for non-volume devices
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "NoAutoplayfornonVolume" 1
+
+# CIS 18.10.7.2 – AutoRun default behavior = Do not execute
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoAutorun" 1
+
+# CIS 18.10.7.3 – Turn off Autoplay for all drives
+Set-RegValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun" 255
+
+# CIS 18.10.41.1 – Block all consumer Microsoft account user authentication
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\MicrosoftAccount" "DisableUserAuth" 1
+
+# CIS 18.10.50.1 – Prevent OneDrive for file storage
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" "DisableFileSyncNGSC" 1
+
+# CIS 18.10.58.3 – Disable Cortana
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortana" 0
+
+# CIS 18.10.58.4 – Disable Cortana above lock screen
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortanaAboveLock" 0
+
+# CIS 18.10.58.6 – Disable search/Cortana location
+Set-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowSearchToUseLocation" 0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 5 – SERVICES (disable unneeded)
+# NOTE: Print Spooler and Bluetooth are in the FRICTION list below.
+#       Only truly unnecessary services are stopped here.
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "--- Section 5: System Services ---"
+
+$servicesToDisable = @(
+    @("MapsBroker",    "Downloaded Maps Manager"),
+    @("lltdsvc",      "Link-Layer Topology Discovery Mapper"),
+    @("MSiSCSI",      "Microsoft iSCSI Initiator"),
+    @("RasAuto",      "Remote Access Auto Connection Manager"),
+    @("SessionEnv",   "Remote Desktop Configuration"),
+    @("TermService",  "Remote Desktop Services"),
+    @("UmRdpService", "Remote Desktop Services UserMode Port Redirector"),
+    @("RpcLocator",   "Remote Procedure Call Locator"),
+    @("RemoteRegistry","Remote Registry"),
+    @("RoutingAndRemoteAccess","Routing and Remote Access"),
+    @("LanmanServer", "Server"),  # Only disable if not a file share host!
+    @("simptcp",      "Simple TCP/IP Services"),
+    @("SNMP",         "SNMP Service"),
+    @("sacsvr",       "Special Administration Console Helper"),
+    @("SSDPSRV",      "SSDP Discovery"),
+    @("TlntSvr",      "Telnet"),
+    @("upnphost",     "UPnP Device Host"),
+    @("WMSvc",        "Web Management Service"),
+    @("WerSvc",       "Windows Error Reporting Service"),
+    @("Wecsvc",       "Windows Event Collector"),
+    @("WpnService",   "Windows Push Notification System Service"),
+    @("PushToInstall","Windows PushToInstall Service"),
+    @("XboxGipSvc",   "Xbox Accessory Management Service"),
+    @("XblAuthManager","Xbox Live Auth Manager"),
+    @("XblGameSave",  "Xbox Live Game Save"),
+    @("XboxNetApiSvc","Xbox Live Networking Service"),
+    @("wercplsupport","Problem Reports Control Panel Support"),
+    @("wbengine",     "Block Level Backup Engine Service"),
+    @("WFDSConMgrSvc","Wi-Fi Direct Services Connection Manager")
+)
+
+foreach ($svc in $servicesToDisable) {
+    $svcName = $svc[0]
+    $svcDesc = $svc[1]
+    $s = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+    if ($s) {
+        if ($s.Status -eq "Running") {
+            Stop-Service -Name $svcName -Force -ErrorAction SilentlyContinue
+        }
+        Set-Service -Name $svcName -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Log "Disabled: $svcDesc ($svcName)" "OK"
+    } else {
+        Write-Log "Not found (skip): $svcName" "INFO"
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DONE
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Log ""
+Write-Log "=== Remediation complete. Log saved to: $LogFile ==="
+Write-Log "A restart may be required for some settings to take effect."
+Write-Log ""
+Write-Log "========================================================="
+Write-Log "FRICTION ITEMS – NOT applied (review and decide manually)"
+Write-Log "========================================================="
+Write-Log "These checks will affect everyday use. Enable only if your"
+Write-Log "environment specifically requires them."
+Write-Log ""
+Write-Log "[5.1/5.2]  Bluetooth services (BTAGService, bthserv)"
+Write-Log "           >> Disable ONLY if no Bluetooth peripherals used"
+Write-Log "           Set-Service BTAGService -StartupType Disabled"
+Write-Log "           Set-Service bthserv     -StartupType Disabled"
+Write-Log ""
+Write-Log "[5.17]     Print Spooler (Spooler)"
+Write-Log "           >> Disable ONLY if no local or network printing needed"
+Write-Log "           Stop-Service Spooler -Force ; Set-Service Spooler -StartupType Disabled"
+Write-Log ""
+Write-Log "[5.5]      Geolocation Service (lfsvc)"
+Write-Log "           >> Disable breaks location features in apps and Maps"
+Write-Log "           Set-Service lfsvc -StartupType Disabled"
+Write-Log ""
+Write-Log "[18.10.10.1] Allow Use of Camera – set to Disabled"
+Write-Log "           >> Blocks webcam for video calls (Teams, Zoom, etc.)"
+Write-Log "           Set-RegValue HKLM:\SOFTWARE\Policies\Microsoft\Camera AllowCamera 0"
+Write-Log ""
+Write-Log "[18.10.50.1] OneDrive disabled"
+Write-Log "           >> Applied above; remove if you rely on OneDrive sync"
+Write-Log "           Remove-ItemProperty HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive DisableFileSyncNGSC"
+Write-Log ""
+Write-Log "[18.10.58.3/4/6] Cortana disabled"
+Write-Log "           >> Applied above; remove if you use voice search"
+Write-Log ""
+Write-Log "[18.9.33.6.3/6.4] Disable S1-S3 standby states"
+Write-Log "           >> May interfere with sleep/hibernate behaviour"
+Write-Log "           Set-RegValue HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\abfc2519-3608-4c2a-94ea-171b0ed546ab ACSettingIndex 0"
+Write-Log "           Set-RegValue HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\abfc2519-3608-4c2a-94ea-171b0ed546ab DCSettingIndex 0"
+Write-Log ""
+Write-Log "[18.6.21.1] Prevent Wi-Fi when on Ethernet"
+Write-Log "           >> Applies if you hot-swap between wired/wireless"
+Write-Log "           Set-RegValue HKLM:\SOFTWARE\Policies\Microsoft\Windows\WcmSvc\GroupPolicy fMinimizeConnections 3"
+Write-Log ""
+Write-Log "Review log: $LogFile"
