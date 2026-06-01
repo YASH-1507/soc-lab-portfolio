@@ -24,7 +24,7 @@ Through this repository, I am documenting my hands-on labs and translating them 
  
 | # | Project | Status |
 |---|---|---|
-| 01 | [SOC Fundamentals](./01-soc-fundamentals/README.md) | ✅ Complete |
+| 01 | [SOC Fundamentals](01-soc-fundamentals) | ✅ Complete |
  
 ---
  
