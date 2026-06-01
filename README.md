@@ -24,7 +24,7 @@ Through this repository, I am documenting my hands-on labs and translating them 
 | # | Project | Status |
 |---|---|---|
 | 01 | [SOC Fundamentals](01-soc-fundamentals) | ✅ Complete |
-| 02 | [Endpoint Security Hardening & Compliance Automation](Endpoint Security Hardening & Compliance Automation) | ✅ Complete |
+| 02 | [Endpoint Security Hardening & Compliance Automation](https://github.com/YASH-1507/soc-lab-portfolio/tree/f8e105261331948bd6464d1c9eda51645508ee5d/Endpoint%20Security%20Hardening%20%26%20Compliance%20Automation) | ✅ Complete |
 
 ---
 
